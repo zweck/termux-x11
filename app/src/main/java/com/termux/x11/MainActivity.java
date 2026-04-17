@@ -167,12 +167,28 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.main_activity);
 
         frm = findViewById(R.id.frame);
+        // Phoshdroid passes padding extras so phosh's X11 surface leaves gaps above
+        // and below the Android view. The bottom gap gives the lockscreen swipe an
+        // edge to originate from; the top gap keeps phosh clear of the status bar /
+        // camera cutout.
+        int topPadding = getIntent() != null ? getIntent().getIntExtra("phoshdroid_top_padding_px", 0) : 0;
+        int bottomPadding = getIntent() != null ? getIntent().getIntExtra("phoshdroid_bottom_padding_px", 0) : 0;
         findViewById(R.id.preferences_button).setOnClickListener((l) -> startActivity(new Intent(this, LoriePreferences.class) {{ setAction(Intent.ACTION_MAIN); }}));
         findViewById(R.id.help_button).setOnClickListener((l) -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/termux/termux-x11/blob/master/README.md#running-graphical-applications"))));
         findViewById(R.id.exit_button).setOnClickListener((l) -> finish());
 
         LorieView lorieView = findViewById(R.id.lorieView);
         View lorieParent = (View) lorieView.getParent();
+
+        if (topPadding != 0 || bottomPadding != 0) {
+            ViewGroup.LayoutParams lp = lorieView.getLayoutParams();
+            if (lp instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) lp;
+                mlp.topMargin = topPadding;
+                mlp.bottomMargin = bottomPadding;
+                lorieView.setLayoutParams(mlp);
+            }
+        }
 
         mInputHandler = new TouchInputHandler(this, new InputEventSender(lorieView));
         mLorieKeyListener = (v, k, e) -> {
@@ -248,6 +264,19 @@ public class MainActivity extends AppCompatActivity {
 
         onReceiveConnection(getIntent());
         findViewById(android.R.id.content).addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> makeSureHelpersAreVisibleAndInScreenBounds());
+
+        // Reserve the entire view area from Android's system gesture zones so the
+        // bottom-edge swipe-up reaches the X11 surface instead of triggering Android
+        // home/back. Android caps each exclusion rect to 200dp tall but the list of
+        // rects is unlimited — fill the whole view with a stripe.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            final View content = findViewById(android.R.id.content);
+            content.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+                java.util.List<android.graphics.Rect> rects = new java.util.ArrayList<>();
+                rects.add(new android.graphics.Rect(0, 0, right - left, bottom - top));
+                content.setSystemGestureExclusionRects(rects);
+            });
+        }
     }
 
     @Override

@@ -22,7 +22,10 @@
 #pragma ide diagnostic ignored "ConstantFunctionResult"
 #define log(prio, ...) __android_log_print(ANDROID_LOG_ ## prio, "LorieNative", __VA_ARGS__)
 
-extern volatile int conn_fd; // The only variable from shared with X server code.
+// Activity's end of the socketpair to the X server. When in-process with the
+// X server, the server keeps its own server_conn_fd in cmdentrypoint.c — the
+// two must not alias.
+static volatile int client_conn_fd = -1;
 
 static struct {
     jclass self;
@@ -138,26 +141,26 @@ static int xcallback(int fd, int events, __unused void* data) {
             (*env)->CallVoidMethod(env, instance, MainActivity.clientConnectedStateChanged);
 
         ALooper_removeFd(ALooper_forThread(), fd);
-        close(conn_fd);
-        conn_fd = -1;
+        close(client_conn_fd);
+        client_conn_fd = -1;
         rendererSetSharedState(NULL);
         rendererRemoveAllBuffers();
         log(DEBUG, "disconnected");
         return 1;
     }
 
-    if (conn_fd != -1) {
+    if (client_conn_fd != -1) {
         lorieEvent e = {0};
 
         again:
-        if (read(conn_fd, &e, sizeof(e)) == sizeof(e)) {
+        if (read(client_conn_fd, &e, sizeof(e)) == sizeof(e)) {
             switch(e.type) {
                 case EVENT_CLIPBOARD_SEND: {
                     if (!e.clipboardSend.count)
                         break;
                     char clipboard[e.clipboardSend.count + 1];
                     memset(clipboard, 0, e.clipboardSend.count + 1);
-                    read(conn_fd, clipboard, sizeof(clipboard));
+                    read(client_conn_fd, clipboard, sizeof(clipboard));
                     clipboard[e.clipboardSend.count] = 0;
                     log(DEBUG, "Clipboard content (%zu symbols) is %s", strlen(clipboard), clipboard);
                     jmethodID id = (*env)->GetMethodID(env, (*env)->GetObjectClass(env, thiz), "setClipboardText","(Ljava/lang/String;)V");
@@ -176,7 +179,7 @@ static int xcallback(int fd, int events, __unused void* data) {
                 }
                 case EVENT_SHARED_SERVER_STATE: {
                     struct lorie_shared_server_state* state = NULL;
-                    int stateFd = ancil_recv_fd(conn_fd);
+                    int stateFd = ancil_recv_fd(client_conn_fd);
 
                     if (stateFd < 0)
                         break;
@@ -195,7 +198,7 @@ static int xcallback(int fd, int events, __unused void* data) {
                 case EVENT_ADD_BUFFER: {
                     static LorieBuffer* buffer = NULL;
                     const LorieBuffer_Desc* desc;
-                    LorieBuffer_recvHandleFromUnixSocket(conn_fd, &buffer);
+                    LorieBuffer_recvHandleFromUnixSocket(client_conn_fd, &buffer);
                     desc = LorieBuffer_description(buffer);
                     log(INFO, "Received shared buffer width %d stride %d height %d format %d type %d id %llu", desc->width, desc->stride, desc->height, desc->format, desc->type, desc->id);
                     rendererAddBuffer(buffer);
@@ -212,7 +215,7 @@ static int xcallback(int fd, int events, __unused void* data) {
         }
 
         int n;
-        if (ioctl(conn_fd, FIONREAD, &n) >= 0 && n > sizeof(e))
+        if (ioctl(client_conn_fd, FIONREAD, &n) >= 0 && n > sizeof(e))
             goto again;
     }
 
@@ -220,22 +223,29 @@ static int xcallback(int fd, int events, __unused void* data) {
 }
 
 static void connect_(__unused JNIEnv* env, __unused jobject cls, jint fd) {
-    if (conn_fd != -1) {
-        ALooper_removeFd(ALooper_forThread(), conn_fd);
-        close(conn_fd);
+    // Don't reconnect if already connected — prevents disconnect/reconnect loop
+    if (client_conn_fd != -1 && fd != -1) {
+        log(DEBUG, "already connected, ignoring new fd %d", fd);
+        close(fd);
+        return;
+    }
+
+    if (client_conn_fd != -1) {
+        ALooper_removeFd(ALooper_forThread(), client_conn_fd);
+        close(client_conn_fd);
         rendererSetSharedState(NULL);
         rendererRemoveAllBuffers();
         log(DEBUG, "disconnected");
     }
 
-    if ((conn_fd = fd) != -1) {
+    if ((client_conn_fd = fd) != -1) {
         ALooper_addFd(ALooper_forThread(), fd, 0, ALOOPER_EVENT_INPUT | ALOOPER_EVENT_ERROR | ALOOPER_EVENT_HANGUP, xcallback, NULL);
         log(DEBUG, "XCB connection is successfull");
     }
 }
 
 static jboolean connected(__unused JNIEnv* env,__unused jclass clazz) {
-    return conn_fd != -1;
+    return client_conn_fd != -1;
 }
 
 static void startLogcat(JNIEnv *env, __unused jobject cls, jint fd) {
@@ -258,88 +268,88 @@ static void startLogcat(JNIEnv *env, __unused jobject cls, jint fd) {
 }
 
 static void setClipboardSyncEnabled(__unused JNIEnv* env, __unused jobject cls, jboolean enable, __unused jboolean ignored) {
-    if (conn_fd != -1) {
+    if (client_conn_fd != -1) {
         lorieEvent e = { .clipboardEnable = { .t = EVENT_CLIPBOARD_ENABLE, .enable = enable } };
-        write(conn_fd, &e, sizeof(e));
+        write(client_conn_fd, &e, sizeof(e));
     }
 }
 
 static void sendClipboardAnnounce(__unused JNIEnv *env, __unused jobject thiz) {
-    if (conn_fd != -1) {
+    if (client_conn_fd != -1) {
         lorieEvent e = { .type = EVENT_CLIPBOARD_ANNOUNCE };
-        write(conn_fd, &e, sizeof(e));
+        write(client_conn_fd, &e, sizeof(e));
     }
 }
 
 static void sendClipboardEvent(JNIEnv *env, __unused jobject thiz, jbyteArray text) {
-    if (conn_fd != -1 && text) {
+    if (client_conn_fd != -1 && text) {
         jsize length = (*env)->GetArrayLength(env, text);
         jbyte* str = (*env)->GetByteArrayElements(env, text, NULL);
         lorieEvent e = { .clipboardSend = { .t = EVENT_CLIPBOARD_SEND, .count = length } };
-        write(conn_fd, &e, sizeof(e));
-        write(conn_fd, str, length);
+        write(client_conn_fd, &e, sizeof(e));
+        write(client_conn_fd, str, length);
         (*env)->ReleaseByteArrayElements(env, text, str, JNI_ABORT);
     }
 }
 
 static void sendWindowChange(__unused JNIEnv* env, __unused jobject cls, jint width, jint height, jint framerate, jstring jname) {
-    if (conn_fd != -1) {
+    if (client_conn_fd != -1) {
         const char *name = (!jname || width <= 0 || height <= 0) ? NULL : (*env)->GetStringUTFChars(env, jname, JNI_FALSE);
         lorieEvent e = { .screenSize = { .t = EVENT_SCREEN_SIZE, .width = width, .height = height, .framerate = framerate, .name_size = (name ? strlen(name) : 0) } };
-        write(conn_fd, &e, sizeof(e));
+        write(client_conn_fd, &e, sizeof(e));
         if (name) {
-            write(conn_fd, name, strlen(name));
+            write(client_conn_fd, name, strlen(name));
             (*env)->ReleaseStringUTFChars(env, jname, name);
         }
     }
 }
 
 static void sendMouseEvent(__unused JNIEnv* env, __unused jobject cls, jfloat x, jfloat y, jint which_button, jboolean button_down, jboolean relative) {
-    if (conn_fd != -1) {
+    if (client_conn_fd != -1) {
         if (which_button > 0)
             (*env)->CallVoidMethod(env, globalThiz, MainActivity.resetIme);
         lorieEvent e = { .mouse = { .t = EVENT_MOUSE, .x = x, .y = y, .detail = which_button, .down = button_down, .relative = relative } };
-        write(conn_fd, &e, sizeof(e));
+        write(client_conn_fd, &e, sizeof(e));
     }
 }
 
 static void sendTouchEvent(__unused JNIEnv* env, __unused jobject cls, jint action, jint id, jint x, jint y) {
-    if (conn_fd != -1 && action != -1) {
+    if (client_conn_fd != -1 && action != -1) {
         lorieEvent e = { .touch = { .t = EVENT_TOUCH, .type = action, .id = id, .x = x, .y = y } };
-        write(conn_fd, &e, sizeof(e));
+        write(client_conn_fd, &e, sizeof(e));
     }
 }
 
 static void sendStylusEvent(__unused JNIEnv *env, __unused jobject thiz, jfloat x, jfloat y,
                             jint pressure, jint tilt_x, jint tilt_y,
                             jint orientation, jint buttons, jboolean eraser, jboolean mouse) {
-    if (conn_fd != -1) {
+    if (client_conn_fd != -1) {
         (*env)->CallVoidMethod(env, globalThiz, MainActivity.resetIme);
         lorieEvent e = { .stylus = { .t = EVENT_STYLUS, .x = x, .y = y, .pressure = pressure, .tilt_x = tilt_x, .tilt_y = tilt_y, .orientation = orientation, .buttons = buttons, .eraser = eraser, .mouse = mouse } };
-        write(conn_fd, &e, sizeof(e));
+        write(client_conn_fd, &e, sizeof(e));
     }
 }
 
 static void requestStylusEnabled(__unused JNIEnv *env, __unused jclass clazz, jboolean enabled) {
-    if (conn_fd != -1) {
+    if (client_conn_fd != -1) {
         lorieEvent e = { .stylusEnable = { .t = EVENT_STYLUS_ENABLE, .enable = enabled } };
-        write(conn_fd, &e, sizeof(e));
+        write(client_conn_fd, &e, sizeof(e));
     }
 }
 
 static jboolean sendKeyEvent(__unused JNIEnv* env, __unused jobject cls, jint scan_code, jint key_code, jboolean key_down) {
-    if (conn_fd != -1) {
+    if (client_conn_fd != -1) {
         int code = (scan_code) ?: android_to_linux_keycode[key_code];
         log(DEBUG, "Sending key: %d (%d %d %d)", code + 8, scan_code, key_code, key_down);
         lorieEvent e = { .key = { .t = EVENT_KEY, .key = code + 8, .state = key_down } };
-        write(conn_fd, &e, sizeof(e));
+        write(client_conn_fd, &e, sizeof(e));
     }
 
     return true;
 }
 
 static void sendTextEvent(JNIEnv *env, __unused jobject thiz, jbyteArray text) {
-    if (conn_fd != -1 && text) {
+    if (client_conn_fd != -1 && text) {
         jsize length = (*env)->GetArrayLength(env, text);
         jbyte *str = (*env)->GetByteArrayElements(env, text, NULL);
         char *p = (char*) str;
@@ -363,7 +373,7 @@ static void sendTextEvent(JNIEnv *env, __unused jobject thiz, jbyteArray text) {
 
             log(DEBUG, "Sending unicode event: %lc (U+%X)", wc, wc);
             lorieEvent e = { .unicode = { .t = EVENT_UNICODE, .code = wc } };
-            write(conn_fd, &e, sizeof(e));
+            write(client_conn_fd, &e, sizeof(e));
             p += len;
             if (p - (char*) str >= length)
                 break;

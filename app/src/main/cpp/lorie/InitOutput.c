@@ -707,6 +707,22 @@ void InitOutput(ScreenInfo * screen_info, int argc, char **argv) {
     if (monitorResolution == 0)
         monitorResolution = 96;
 
+    // Override default 1280x1024 with env-provided device size so phoc creates
+    // its initial X11 output at the right size (it won't resize when the root
+    // window is later resized via RandR).
+    {
+        char *w = getenv("XLORIE_WIDTH");
+        char *h = getenv("XLORIE_HEIGHT");
+        if (w && h) {
+            int iw = atoi(w);
+            int ih = atoi(h);
+            if (iw > 0 && ih > 0) {
+                pvfb->root.width = iw;
+                pvfb->root.height = ih;
+            }
+        }
+    }
+
     for(i = 0; i < ARRAY_SIZE(depths); i++) {
         screen_info->formats[i].depth = depths[i];
         screen_info->formats[i].bitsPerPixel = bpp[i];

@@ -92,6 +92,10 @@ public final class InputEventSender {
     }
 
     final boolean[] pointers = new boolean[10];
+    // Last reported position per pointer id — used to suppress duplicate
+    // XI_TouchUpdate events that would reset compositor swipe-velocity estimators.
+    private final int[] lastX = new int[10];
+    private final int[] lastY = new int[10];
     /**
      * Extracts the touch point data from a MotionEvent, converts each point into a marshallable
      * object and passes the set of points to the JNI layer to be transmitted to the remote host.
@@ -113,17 +117,27 @@ public final class InputEventSender {
                 pointers[event.getPointerId(p)] = false;
 
             for (int p = 0; p < pointerCount; p++) {
+                int id = event.getPointerId(p);
                 int x = clamp((int) (event.getX(p) * renderData.scale.x), 0, renderData.screenWidth);
                 int y = clamp((int) (event.getY(p) * renderData.scale.y), 0, renderData.screenHeight);
-                pointers[event.getPointerId(p)] = true;
-                mInjector.sendTouchEvent(XI_TouchUpdate, event.getPointerId(p), x, y);
+                pointers[id] = true;
+                // Skip updates that don't change position — sending duplicate XI_TouchUpdate
+                // events resets Wayland compositor gesture-velocity estimators on every frame
+                // and turns a real swipe into "a press with no motion" for phosh's lockscreen.
+                if (id >= 0 && id < lastX.length && x == lastX[id] && y == lastY[id])
+                    continue;
+                if (id >= 0 && id < lastX.length) {
+                    lastX[id] = x;
+                    lastY[id] = y;
+                }
+                mInjector.sendTouchEvent(XI_TouchUpdate, id, x, y);
             }
 
-            // Sometimes Android does not send ACTION_POINTER_UP/ACTION_UP so some pointers are "stuck" in pressed state.
-            for (int p = 0; p < 10; p++) {
-                if (!pointers[p])
-                    mInjector.sendTouchEvent(XI_TouchEnd, p, 0, 0);
-            }
+            // Upstream Termux:X11 sent XI_TouchEnd(p, 0, 0) on every ACTION_MOVE for
+            // pointer ids 1..9 as a workaround for stuck pointers. That creates nine
+            // phantom touch-end events per motion frame that Wayland compositors like
+            // phoc can mistake for real touches, interfering with gesture recognition.
+            // We rely on ACTION_UP / ACTION_POINTER_UP / ACTION_CANCEL instead.
         } else {
             // For all other events, we only want to grab the current/active pointer.  The event
             // contains a list of every active pointer but passing all of of these to the host can
@@ -136,6 +150,10 @@ public final class InputEventSender {
             if (a == XI_TouchEnd)
                 mInjector.sendTouchEvent(XI_TouchUpdate, id, x, y);
             mInjector.sendTouchEvent(a, id, x, y);
+            if (id >= 0 && id < lastX.length) {
+                lastX[id] = x;
+                lastY[id] = y;
+            }
         }
     }
 

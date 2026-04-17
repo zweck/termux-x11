@@ -653,9 +653,12 @@ public class TouchInputHandler {
                 }
                 moveCursorByOffset(distanceX, distanceY);
             }
-            if (!(mInputStrategy instanceof InputStrategyInterface.TrackpadInputStrategy) && mIsDragging) {
+            if (mInputStrategy instanceof InputStrategyInterface.SimulatedTouchInputStrategy && mIsDragging) {
                 // Ensure the cursor follows the user's finger when the user is dragging under
-                // direct input mode.
+                // simulated touch mode. NOT in direct-touch (Null) mode — we're already sending
+                // real X11 touch events there, and concurrent pointer motion with no button held
+                // makes Wayland compositors like phoc+phosh treat the stream as mouse hover and
+                // ignore our real touch gesture.
                 moveCursorToScreenPoint(e2.getX(), e2.getY());
             }
             return true;

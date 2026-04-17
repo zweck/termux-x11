@@ -29,7 +29,11 @@
 
 static int argc = 0;
 static char** argv = NULL;
-__LIBC_HIDDEN__ volatile int conn_fd = -1; // The only variable shared with activity code.
+// The X server's end of the socketpair connecting to the activity.
+// Private to the server — the activity holds its own client_conn_fd in activity.c.
+// In same-process mode these MUST be separate variables, otherwise server and
+// activity overwrite each other's fd.
+static volatile int server_conn_fd = -1;
 extern DeviceIntPtr lorieMouse, lorieTouch, lorieKeyboard, loriePen, lorieEraser;
 extern ScreenPtr pScreenPtr;
 extern int ucs2keysym(long ucs);
@@ -272,7 +276,7 @@ void handleLorieEvents(int fd, __unused int ready, __unused void *ignored) {
         LorieBuffer* buf;
         InputThreadUnregisterDev(fd);
         close(fd);
-        conn_fd = -1;
+        server_conn_fd = -1;
         lorieEnableClipboardSync(FALSE);
         while ((buf = LorieBufferList_first(&registeredBuffers)))
             LorieBuffer_removeFromList(buf);
@@ -396,7 +400,7 @@ void handleLorieEvents(int fd, __unused int ready, __unused void *ignored) {
                 break;
             case EVENT_CLIPBOARD_SEND: {
                 char *data = calloc(1, e.clipboardSend.count + 1);
-                read(conn_fd, data, e.clipboardSend.count);
+                read(server_conn_fd, data, e.clipboardSend.count);
                 data[e.clipboardSend.count] = 0;
                 QueueWorkProc(handleClipboardData, NULL, data);
                 lorieWakeServer();
@@ -410,54 +414,54 @@ void handleLorieEvents(int fd, __unused int ready, __unused void *ignored) {
 }
 
 void lorieSendClipboardData(const char* data) {
-    if (data && conn_fd != -1) {
+    if (data && server_conn_fd != -1) {
         size_t len = strlen(data);
         lorieEvent e = { .clipboardSend = { .t = EVENT_CLIPBOARD_SEND, .count = len } };
-        write(conn_fd, &e, sizeof(e));
-        write(conn_fd, data, len);
+        write(server_conn_fd, &e, sizeof(e));
+        write(server_conn_fd, data, len);
     }
 }
 
 void lorieRequestClipboard(void) {
-    if (conn_fd != -1) {
+    if (server_conn_fd != -1) {
         lorieEvent e = { .type = EVENT_CLIPBOARD_REQUEST };
-        write(conn_fd, &e, sizeof(e));
+        write(server_conn_fd, &e, sizeof(e));
     }
 }
 
 bool lorieConnectionAlive(void) {
-    if (conn_fd == -1)
+    if (server_conn_fd == -1)
         return false;
 
     // Check if socket is closed or has errors.
-    struct pollfd p = { .fd = conn_fd, .events = POLLIN | POLLHUP | POLLERR | POLLRDHUP };
+    struct pollfd p = { .fd = server_conn_fd, .events = POLLIN | POLLHUP | POLLERR | POLLRDHUP };
     return !(poll(&p, 1, 0) == 1 && (p.revents & (POLLERR | POLLNVAL | POLLRDHUP | POLLHUP)));
 }
 
 static Bool addFd(__unused ClientPtr pClient, void *closure) {
     InputThreadRegisterDev((int) (int64_t) closure, handleLorieEvents, NULL);
-    conn_fd = (int) (int64_t) closure;
+    server_conn_fd = (int) (int64_t) closure;
     lorieActivityConnected();
     return TRUE;
 }
 
 void lorieSendSharedServerState(int memfd) {
-    if (conn_fd != -1) {
+    if (server_conn_fd != -1) {
         lorieEvent e = { .type = EVENT_SHARED_SERVER_STATE };
-        write(conn_fd, &e, sizeof(e));
-        ancil_send_fd(conn_fd, memfd);
+        write(server_conn_fd, &e, sizeof(e));
+        ancil_send_fd(server_conn_fd, memfd);
     }
 }
 
 void lorieRegisterBuffer(LorieBuffer* buffer) {
     unsigned long id = LorieBuffer_description(buffer)->id;
-    if (conn_fd == -1 || LorieBufferList_findById(&registeredBuffers, id))
+    if (server_conn_fd == -1 || LorieBufferList_findById(&registeredBuffers, id))
         return; // Already registered
 
-    if (conn_fd != -1 && buffer) {
+    if (server_conn_fd != -1 && buffer) {
         lorieEvent e = { .type = EVENT_ADD_BUFFER };
-        write(conn_fd, &e, sizeof(e));
-        LorieBuffer_sendHandleToUnixSocket(buffer, conn_fd);
+        write(server_conn_fd, &e, sizeof(e));
+        LorieBuffer_sendHandleToUnixSocket(buffer, server_conn_fd);
         LorieBuffer_addToList(buffer, &registeredBuffers);
         const LorieBuffer_Desc* desc = LorieBuffer_description(buffer);
         log(INFO, "Sent shared buffer width %d stride %d height %d format %d type %d id %llu", desc->width, desc->stride, desc->height, desc->format, desc->type, desc->id);
@@ -469,17 +473,17 @@ void lorieUnregisterBuffer(LorieBuffer* buffer) {
     if (!buffer || (!LorieBufferList_findById(&registeredBuffers, (id = LorieBuffer_description(buffer)->id))))
         return;  // Not exist or not registered so no need to unregister
 
-    if (conn_fd != -1 && buffer) {
+    if (server_conn_fd != -1 && buffer) {
         lorieEvent e = { .removeBuffer = { .t = EVENT_REMOVE_BUFFER, .id = id } };
-        write(conn_fd, &e, sizeof(e));
+        write(server_conn_fd, &e, sizeof(e));
         LorieBuffer_removeFromList(buffer);
     }
 }
 
 void DDXNotifyFocusChanged(void) {
-    if (conn_fd != -1) {
+    if (server_conn_fd != -1) {
         lorieEvent e = { .type = EVENT_WINDOW_FOCUS_CHANGED };
-        write(conn_fd, &e, sizeof(e));
+        write(server_conn_fd, &e, sizeof(e));
     }
 }
 
@@ -522,7 +526,7 @@ Java_com_termux_x11_CmdEntryPoint_getLogcatOutput(JNIEnv *env, __unused jobject 
 
 JNIEXPORT jboolean JNICALL
 Java_com_termux_x11_CmdEntryPoint_connected(__unused JNIEnv *env, __unused jclass clazz) {
-    return conn_fd != -1;
+    return server_conn_fd != -1;
 }
 
 JNIEXPORT void JNICALL
