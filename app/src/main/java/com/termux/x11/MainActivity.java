@@ -38,6 +38,7 @@ import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
 import android.view.DragEvent;
+import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -182,11 +183,17 @@ public class MainActivity extends AppCompatActivity {
 
         if (topPadding != 0 || bottomPadding != 0) {
             ViewGroup.LayoutParams lp = lorieView.getLayoutParams();
-            if (lp instanceof ViewGroup.MarginLayoutParams) {
-                ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) lp;
-                mlp.topMargin = topPadding;
-                mlp.bottomMargin = bottomPadding;
-                lorieView.setLayoutParams(mlp);
+            if (lp instanceof android.widget.FrameLayout.LayoutParams) {
+                android.widget.FrameLayout.LayoutParams flp = (android.widget.FrameLayout.LayoutParams) lp;
+                flp.topMargin = topPadding;
+                flp.bottomMargin = bottomPadding;
+                // The layout centres lorieView, so margins would read as a shift
+                // around the centre row. Pin the view to the top instead: then
+                // top/bottom margins mean what they say (view at row `top`,
+                // height = parent - top - bottom), which is what the host's
+                // geometry prediction assumes.
+                flp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+                lorieView.setLayoutParams(flp);
             }
         }
 
