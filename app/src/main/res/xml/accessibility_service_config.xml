@@ -4,6 +4,5 @@
     android:accessibilityEventTypes=""
     android:accessibilityFlags=""
     android:canRetrieveWindowContent="false"
-    android:settingsActivity=".LoriePreferences"
     android:packageNames="@null"
     android:canRequestFilterKeyEvents="true" />

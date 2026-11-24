@@ -2,6 +2,7 @@ package com.termux.x11.utils;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.content.ComponentName;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,9 +29,37 @@ public class KeyInterceptor extends AccessibilityService {
         self = this;
     }
 
+    /**
+     * The service's flattened component, built from the package this APK actually runs as.
+     * The literal that used to live here ("com.termux.x11/.utils.KeyInterceptor") names a
+     * component that does not exist in an APK with a different applicationId (Omdroid is
+     * com.phoshdroid.app), so the write silently enabled nothing.
+     */
+    private static String component(@NonNull Context ctx) {
+        return new ComponentName(ctx, KeyInterceptor.class).flattenToString();
+    }
+
+    /**
+     * Adds {@code component} to a colon-separated accessibility-service list without
+     * dropping or reordering anything else: the old code wrote the bare component over
+     * the whole setting, which disabled every other accessibility service the user had on.
+     */
+    private static String withComponent(String current, String component) {
+        if (current == null || current.isEmpty())
+            return component;
+
+        for (String entry : current.split(":"))
+            if (entry.equals(component))
+                return current;
+
+        return current + ":" + component;
+    }
+
     public static void launch(@NonNull Context ctx) {
         try {
-            Settings.Secure.putString(ctx.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "com.termux.x11/.utils.KeyInterceptor");
+            String component = component(ctx);
+            String current = Settings.Secure.getString(ctx.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            Settings.Secure.putString(ctx.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, withComponent(current, component));
             Settings.Secure.putString(ctx.getContentResolver(), Settings.Secure.ACCESSIBILITY_ENABLED, "1");
             launchedAutomatically = true;
         } catch (SecurityException e) {
@@ -38,7 +67,7 @@ public class KeyInterceptor extends AccessibilityService {
                     .setTitle("Permission denied")
                     .setMessage("Android requires WRITE_SECURE_SETTINGS permission to start accessibility service automatically.\n" +
                             "Please, launch this command using ADB:\n" +
-                            "adb shell pm grant com.termux.x11 android.permission.WRITE_SECURE_SETTINGS")
+                            "adb shell pm grant " + ctx.getPackageName() + " android.permission.WRITE_SECURE_SETTINGS")
                     .setNegativeButton("OK", null)
                     .create()
                     .show();
