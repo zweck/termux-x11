@@ -22,7 +22,7 @@
             android:taskAffinity=".MainActivity"
             android:launchMode="singleInstance"
             android:supportsPictureInPicture="true"
-            android:configChanges="fontScale|orientation|screenSize|keyboard|keyboardHidden|layoutDirection|locale|mcc|mnc|navigation|screenLayout|touchscreen|uiMode|smallestScreenSize|density"
+            android:configChanges="fontScale|orientation|screenSize|keyboard|keyboardHidden|layoutDirection|locale|mcc|mnc|navigation|screenLayout|touchscreen|colorMode|uiMode|smallestScreenSize|density"
             android:resizeableActivity="true"
             android:windowSoftInputMode="stateHidden"
             android:exported="false">
@@ -36,7 +36,7 @@
             android:resizeableActivity="true"
             android:exported="false">
         </activity>
-	    <meta-data android:name="com.samsung.android.multidisplay.keep_process_alive" android:value="false"/>
+	    <meta-data android:name="com.samsung.android.multidisplay.keep_process_alive" android:value="true"/>
 	    <meta-data android:name="android.allow_multiple_resumed_activities" android:value="true" />
 
         <service android:name=".utils.KeyInterceptor"
