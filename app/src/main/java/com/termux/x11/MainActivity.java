@@ -65,6 +65,7 @@ import com.termux.x11.input.InputEventSender;
 import com.termux.x11.input.InputStub;
 import com.termux.x11.input.TouchInputHandler;
 import com.termux.x11.utils.FullscreenWorkaround;
+import com.termux.x11.utils.KeyboardCapture;
 import com.termux.x11.utils.KeyInterceptor;
 import com.termux.x11.utils.SamsungDexUtils;
 import com.termux.x11.utils.TermuxX11ExtraKeys;
@@ -839,6 +840,17 @@ public class MainActivity extends AppCompatActivity {
         window.setSoftInputMode(reseed ? SOFT_INPUT_ADJUST_RESIZE : SOFT_INPUT_ADJUST_PAN);
 
         ((FrameLayout) findViewById(android.R.id.content)).getChildAt(0).setFitsSystemWindows(!fullscreen);
+
+        // r7 a5: with this window focused on a monitor (or under DeX), ask for the
+        // platform's keyboard capture so Meta reaches the X server before the
+        // system's own shortcuts do. Reflection, because the API is Android 16.1
+        // and this tree compiles against 35; when it is absent the accessibility
+        // KeyInterceptor above is still the path. Capture is handed back as soon
+        // as the window loses focus, so the phone's own shortcuts work again.
+        boolean onExternalDisplay = getLorieView() != null
+                && getLorieView().getDisplay() != null
+                && getLorieView().getDisplay().getDisplayId() != Display.DEFAULT_DISPLAY;
+        KeyboardCapture.apply(this, hasFocus && (onExternalDisplay || SamsungDexUtils.checkDeXEnabled(this)));
     }
 
     @Override
