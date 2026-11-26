@@ -8,6 +8,13 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE RelWithDebInfo)
 
+# Keep the build machine's paths out of the shipped library: __FILE__ in assert()
+# and the X server's BUG_* macros otherwise embeds the absolute source path of
+# whoever built it, and the debug info carries the build directory.
+add_compile_options(
+        "-ffile-prefix-map=${CMAKE_SOURCE_DIR}/="
+        "-ffile-prefix-map=${CMAKE_BINARY_DIR}/=")
+
 include(TestBigEndian)
 include(CheckIncludeFile)
 include(CheckSourceCompiles)
