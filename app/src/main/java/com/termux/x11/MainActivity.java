@@ -173,8 +173,16 @@ public class MainActivity extends AppCompatActivity {
         // and below the Android view. The bottom gap gives the lockscreen swipe an
         // edge to originate from; the top gap keeps phosh clear of the status bar /
         // camera cutout.
-        int topPadding = getIntent() != null ? getIntent().getIntExtra("phoshdroid_top_padding_px", 0) : 0;
-        int bottomPadding = getIntent() != null ? getIntent().getIntExtra("phoshdroid_bottom_padding_px", 0) : 0;
+        // r7: these gaps belong to the BUILT-IN display (the extra-key bar). On a
+        // monitor the view fills the window, see applyPhoshdroidPadding. A launch
+        // made while docked carries the built-in gap in its own extras.
+        Intent launch = getIntent();
+        if (launch != null) {
+            builtinTopPadding = launch.getIntExtra("phoshdroid_builtin_top_padding_px",
+                    launch.getIntExtra("phoshdroid_top_padding_px", 0));
+            builtinBottomPadding = launch.getIntExtra("phoshdroid_builtin_bottom_padding_px",
+                    launch.getIntExtra("phoshdroid_bottom_padding_px", 0));
+        }
         findViewById(R.id.preferences_button).setOnClickListener((l) -> startActivity(new Intent(this, LoriePreferences.class) {{ setAction(Intent.ACTION_MAIN); }}));
         findViewById(R.id.help_button).setOnClickListener((l) -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/termux/termux-x11/blob/master/README.md#running-graphical-applications"))));
         findViewById(R.id.exit_button).setOnClickListener((l) -> finish());
@@ -182,21 +190,7 @@ public class MainActivity extends AppCompatActivity {
         LorieView lorieView = findViewById(R.id.lorieView);
         View lorieParent = (View) lorieView.getParent();
 
-        if (topPadding != 0 || bottomPadding != 0) {
-            ViewGroup.LayoutParams lp = lorieView.getLayoutParams();
-            if (lp instanceof android.widget.FrameLayout.LayoutParams) {
-                android.widget.FrameLayout.LayoutParams flp = (android.widget.FrameLayout.LayoutParams) lp;
-                flp.topMargin = topPadding;
-                flp.bottomMargin = bottomPadding;
-                // The layout centres lorieView, so margins would read as a shift
-                // around the centre row. Pin the view to the top instead: then
-                // top/bottom margins mean what they say (view at row `top`,
-                // height = parent - top - bottom), which is what the host's
-                // geometry prediction assumes.
-                flp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-                lorieView.setLayoutParams(flp);
-            }
-        }
+        applyPhoshdroidPadding();
 
         mInputHandler = new TouchInputHandler(this, new InputEventSender(lorieView));
         mLorieKeyListener = (v, k, e) -> {
@@ -755,6 +749,55 @@ public class MainActivity extends AppCompatActivity {
         return channelId;
     }
 
+    /** r7: the launcher's gaps for the built-in display, read once in onCreate. */
+    private int builtinTopPadding = 0;
+    private int builtinBottomPadding = 0;
+
+    /** r7: true unless this window is on a display other than the built-in one. */
+    private boolean onBuiltinDisplay() {
+        Display display = null;
+        try {
+            display = getDisplay();
+        } catch (Throwable ignored) {
+            // No display attached yet: treat it as the built-in one, as before r7.
+        }
+        return display == null || display.getDisplayId() == Display.DEFAULT_DISPLAY;
+    }
+
+    /**
+     * r7: the view's margins for the display the window is on NOW. The built-in
+     * display keeps the launcher's gaps (the extra-key bar sits in the bottom one);
+     * any other display gets none, because the bar is hidden there and the X root
+     * must equal the monitor. Before r7 the margins were set once in onCreate, so a
+     * session moved to a monitor kept the 165 px bar gap as a black band
+     * (X root 1920x915 on a 1920x1080 display). Idempotent: called on create, on
+     * every configuration change (a display move is one), focus change and new intent.
+     */
+    void applyPhoshdroidPadding() {
+        View view = findViewById(R.id.lorieView);
+        if (view == null)
+            return;
+        ViewGroup.LayoutParams lp = view.getLayoutParams();
+        if (!(lp instanceof FrameLayout.LayoutParams))
+            return;
+        boolean builtin = onBuiltinDisplay();
+        int top = builtin ? builtinTopPadding : 0;
+        int bottom = builtin ? builtinBottomPadding : 0;
+        FrameLayout.LayoutParams flp = (FrameLayout.LayoutParams) lp;
+        if (flp.topMargin == top && flp.bottomMargin == bottom)
+            return;
+        flp.topMargin = top;
+        flp.bottomMargin = bottom;
+        // The layout centres lorieView, so margins would read as a shift around
+        // the centre row. Pin the view to the top instead: then top/bottom margins
+        // mean what they say (view at row `top`, height = parent - top - bottom),
+        // which is what the host's geometry prediction assumes.
+        flp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        view.setLayoutParams(flp);
+        android.util.Log.i("Phoshdroid", "x-view margins top=" + top + " bottom=" + bottom
+                + (builtin ? " (built-in display)" : " (display " + getDisplay().getDisplayId() + ")"));
+    }
+
     int orientation;
 
     @Override
@@ -766,6 +809,15 @@ public class MainActivity extends AppCompatActivity {
 
         orientation = newConfig.orientation;
         setTerminalToolbarView();
+        // r7: a move between displays arrives here (configChanges covers it).
+        applyPhoshdroidPadding();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        // r7: the dock monitor re-launches this activity onto a monitor.
+        applyPhoshdroidPadding();
     }
 
     @SuppressLint("WrongConstant")
@@ -851,6 +903,7 @@ public class MainActivity extends AppCompatActivity {
                 && getLorieView().getDisplay() != null
                 && getLorieView().getDisplay().getDisplayId() != Display.DEFAULT_DISPLAY;
         KeyboardCapture.apply(this, hasFocus && (onExternalDisplay || SamsungDexUtils.checkDeXEnabled(this)));
+        applyPhoshdroidPadding();
     }
 
     @Override
