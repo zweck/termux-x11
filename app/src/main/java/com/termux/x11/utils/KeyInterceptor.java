@@ -9,12 +9,15 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.hardware.display.DisplayManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.Display;
 import android.view.InputDevice;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.accessibility.AccessibilityEvent;
 
 import androidx.annotation.NonNull;
@@ -40,6 +43,8 @@ public class KeyInterceptor extends AccessibilityService {
      * captured for the desktop, or Display.INVALID_DISPLAY while they are not.
      */
     private int dockedDisplay = Display.INVALID_DISPLAY;
+    private final DockedPointer pointer = new DockedPointer();
+    private long lastPointerRecheck = 0;
     private boolean watching = false;
 
     public KeyInterceptor() {
@@ -119,10 +124,17 @@ public class KeyInterceptor extends AccessibilityService {
         self.enabled = false;
     }
 
-    /** Key filtering on or off. (The docked pointer sources join it in the pointer step.) */
+    /**
+     * Key filtering and the docked pointer sources in one service info. The pointer
+     * sources are only ever set while docked: the platform then hands every mouse and
+     * touchpad event to onMotionEvent and to nothing else (API 34+; older platforms
+     * keep the keys-only behaviour).
+     */
     private void applyServiceInfo(boolean filterKeys, boolean pointers) {
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.flags = filterKeys ? AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS : AccessibilityServiceInfo.DEFAULT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+            info.setMotionEventSources(pointers ? DockedInput.POINTER_SOURCES : 0);
         setServiceInfo(info);
     }
 
@@ -176,6 +188,8 @@ public class KeyInterceptor extends AccessibilityService {
             boolean wasDocked = s.dockedDisplay != Display.INVALID_DISPLAY;
             boolean isDocked = docked != Display.INVALID_DISPLAY;
             s.dockedDisplay = docked;
+            if (!isDocked)
+                s.pointer.releaseAll(xSink(a));
             if (isDocked) {
                 handler.removeCallbacks(disableImmediatelyCallback);
                 s.enabled = true;
@@ -268,6 +282,59 @@ public class KeyInterceptor extends AccessibilityService {
             unregisterReceiver(screenReceiver);
         } catch (Throwable ignored) {
         }
+    }
+
+    /** Writes docked pointer input to the X server through the activity's LorieView. */
+    private static DockedPointer.Sink xSink(MainActivity a) {
+        final LorieView view = a == null ? null : a.getLorieView();
+        return new DockedPointer.Sink() {
+            @Override
+            public void move(float dx, float dy) {
+                if (view != null)
+                    view.sendMouseEvent(dx, dy, 0, false, true);
+            }
+
+            @Override
+            public void button(int xButton, boolean down) {
+                if (view != null)
+                    view.sendMouseEvent(0, 0, xButton, down, true);
+            }
+
+            @Override
+            public void wheel(float dx, float dy) {
+                if (view != null)
+                    view.sendMouseWheelEvent(dx, dy);
+            }
+        };
+    }
+
+    /**
+     * r8: a docked mouse or touchpad. Only called while the docked pointer sources are
+     * set; the platform has already taken the event from the rest of the system, so it
+     * cannot be passed on. A rule that no longer holds drops the sources for the next one.
+     */
+    @Override
+    public void onMotionEvent(@NonNull MotionEvent e) {
+        long now = SystemClock.uptimeMillis();
+        if (now - lastPointerRecheck > 500) {
+            lastPointerRecheck = now;
+            recheck();
+        }
+        MainActivity a = MainActivity.getInstance();
+        if (dockedDisplay == Display.INVALID_DISPLAY || a == null)
+            return;
+
+        float relX = e.getAxisValue(MotionEvent.AXIS_RELATIVE_X);
+        float relY = e.getAxisValue(MotionEvent.AXIS_RELATIVE_Y);
+        for (int h = 0; h < e.getHistorySize(); h++) {
+            relX += e.getHistoricalAxisValue(MotionEvent.AXIS_RELATIVE_X, h);
+            relY += e.getHistoricalAxisValue(MotionEvent.AXIS_RELATIVE_Y, h);
+        }
+        int classification = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? e.getClassification() : 0;
+        pointer.onEvent(e.getActionMasked(), e.getButtonState(), classification, relX, relY,
+                e.getAxisValue(MotionEvent.AXIS_VSCROLL), e.getAxisValue(MotionEvent.AXIS_HSCROLL),
+                e.getAxisValue(MotionEvent.AXIS_GESTURE_SCROLL_X_DISTANCE),
+                e.getAxisValue(MotionEvent.AXIS_GESTURE_SCROLL_Y_DISTANCE), xSink(a));
     }
 
     @Override
