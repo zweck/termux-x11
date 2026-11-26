@@ -285,6 +285,30 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         unregisterReceiver(receiver);
         super.onDestroy();
+        // r8: a destroyed activity never keeps a docked keyboard or mouse.
+        KeyInterceptor.recheck();
+    }
+
+    /** r8: true between onStart and onStop, i.e. while this window can be seen. */
+    private boolean startedForInput = false;
+
+    /** r8: docked input capture only runs while the X window is visible. */
+    public boolean isStartedForInput() {
+        return startedForInput;
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        startedForInput = true;
+        KeyInterceptor.recheck();
+    }
+
+    @Override
+    protected void onStop() {
+        startedForInput = false;
+        KeyInterceptor.recheck();
+        super.onStop();
     }
 
     //Register the needed events to handle stylus as left, middle and right click
@@ -811,6 +835,9 @@ public class MainActivity extends AppCompatActivity {
         setTerminalToolbarView();
         // r7: a move between displays arrives here (configChanges covers it).
         applyPhoshdroidPadding();
+        // r8: a move onto or off a monitor switches docked input capture.
+        KeyInterceptor.recheck();
+        handler.postDelayed(KeyInterceptor::recheck, 500);
     }
 
     @Override
@@ -818,6 +845,7 @@ public class MainActivity extends AppCompatActivity {
         super.onNewIntent(intent);
         // r7: the dock monitor re-launches this activity onto a monitor.
         applyPhoshdroidPadding();
+        KeyInterceptor.recheck();
     }
 
     @SuppressLint("WrongConstant")
