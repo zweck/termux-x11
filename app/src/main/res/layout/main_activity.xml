@@ -281,4 +281,23 @@
         android:layout_height="1dp"
         android:background="@android:color/transparent"
         android:layout_gravity="bottom|center" />
+
+    <!-- r12: the extra-key bar starts hidden and this button summons it. It sits
+         in the bottom-left corner, clear of the mouse helper (bottom|centre), and
+         MainActivity lifts it above the bar in code while the bar is shown so the
+         keys never cover it. -->
+    <ImageButton
+        android:id="@+id/extra_keys_button"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="4dp"
+        android:layout_marginBottom="4dp"
+        android:padding="6dp"
+        android:background="@drawable/extra_keys_button_bg"
+        android:foreground="?android:attr/selectableItemBackgroundBorderless"
+        android:src="@drawable/ic_extra_keys"
+        android:contentDescription="@string/extra_keys_button"
+        android:visibility="gone"
+        tools:ignore="PxUsage" />
 </FrameLayout>

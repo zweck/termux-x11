@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- r12: keyboard glyph for the extra-key bar's summon button. A vector, so no
+     binary asset ships; white strokes/dots on the translucent dark circle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M2.9,7h18.2v10h-18.2z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.7"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M5.2,9.4h1.7v1.7h-1.7z M8.1,9.4h1.7v1.7h-1.7z M11,9.4h1.7v1.7h-1.7z M13.9,9.4h1.7v1.7h-1.7z M16.8,9.4h1.7v1.7h-1.7z M5.2,12.4h1.7v1.7h-1.7z M8.1,12.4h1.7v1.7h-1.7z M11,12.4h1.7v1.7h-1.7z M13.9,12.4h1.7v1.7h-1.7z M16.8,12.4h1.7v1.7h-1.7z M6.6,15.2h10.8v1.5h-10.8z"
+        android:fillColor="#FFFFFF" />
+</vector>

@@ -94,6 +94,13 @@ public class MainActivity extends AppCompatActivity {
     private boolean filterOutWinKey = false;
     boolean useTermuxEKBarBehaviour = false;
     private boolean isInPictureInPictureMode = false;
+    /**
+     * r12: whether the extra-key bar is on screen in THIS activity. Starts false
+     * and is never restored from the saved preference, so every launch starts
+     * with the bar hidden; the floating button (R.id.extra_keys_button) and the
+     * "toggle additional key bar" input action flip it via toggleExtraKeys().
+     */
+    private boolean extraKeysVisible = false;
 
     public static Prefs prefs = null;
 
@@ -169,13 +176,11 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.main_activity);
 
         frm = findViewById(R.id.frame);
-        // Phoshdroid passes padding extras so phosh's X11 surface leaves gaps above
-        // and below the Android view. The bottom gap gives the lockscreen swipe an
-        // edge to originate from; the top gap keeps phosh clear of the status bar /
-        // camera cutout.
-        // r7: these gaps belong to the BUILT-IN display (the extra-key bar). On a
-        // monitor the view fills the window, see applyPhoshdroidPadding. A launch
-        // made while docked carries the built-in gap in its own extras.
+        // Phoshdroid passes padding extras for the X11 surface's margins. Since
+        // r12 the launcher passes 0 for both: the extra-key bar is an overlay that
+        // starts hidden, so nothing is reserved above or below the view. The extras
+        // stay in the contract (see applyPhoshdroidPadding) so an older launcher
+        // build still gets the margins it asks for.
         Intent launch = getIntent();
         if (launch != null) {
             builtinTopPadding = launch.getIntExtra("phoshdroid_builtin_top_padding_px",
@@ -257,6 +262,7 @@ public class MainActivity extends AppCompatActivity {
 
         initStylusAuxButtons();
         initMouseAuxButtons();
+        initExtraKeysButton();
 
         if (SDK_INT >= VERSION_CODES.TIRAMISU
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PERMISSION_GRANTED
@@ -702,7 +708,10 @@ public class MainActivity extends AppCompatActivity {
         final ViewPager pager = getTerminalToolbarViewPager();
         ViewGroup parent = (ViewGroup) pager.getParent();
 
-        boolean showNow = LorieView.connected() && prefs.showAdditionalKbd.get() && prefs.additionalKbdVisible.get();
+        // r12: the saved additionalKbdVisible preference no longer decides this;
+        // extraKeysVisible starts false on every launch and only a user action
+        // (the summon button, or the toggle input action) turns it on.
+        boolean showNow = LorieView.connected() && prefs.showAdditionalKbd.get() && extraKeysVisible;
 
         pager.setVisibility(showNow ? View.VISIBLE : View.INVISIBLE);
 
@@ -725,10 +734,16 @@ public class MainActivity extends AppCompatActivity {
 
         frm.setPadding(0, 0, 0, prefs.adjustHeightForEK.get() && showNow ? layoutParams.height : 0);
         getLorieView().requestFocus();
+        layoutExtraKeysButton();
     }
 
     public void toggleExtraKeys(boolean visible, boolean saveState) {
         boolean enabled = prefs.showAdditionalKbd.get();
+
+        // r12: summoned, not restored. The preference still records the last
+        // state (the settings screen uses it), but the bar's visibility comes
+        // from this field, which starts false in every activity.
+        extraKeysVisible = enabled && visible;
 
         if (enabled && LorieView.connected() && saveState)
             prefs.additionalKbdVisible.put(visible);
@@ -739,6 +754,38 @@ public class MainActivity extends AppCompatActivity {
 
     public void toggleExtraKeys() {
         toggleExtraKeys(getTerminalToolbarViewPager().getVisibility() != View.VISIBLE, true);
+    }
+
+    /**
+     * r12: the extra-key bar's summon button. The bar starts hidden in every
+     * session, so this button is the way back to it: it runs the same toggle as
+     * the "toggle additional key bar" input action, showing and hiding the bar.
+     */
+    private void initExtraKeysButton() {
+        View button = findViewById(R.id.extra_keys_button);
+        if (button == null)
+            return;
+        button.setOnClickListener(v -> toggleExtraKeys());
+        layoutExtraKeysButton();
+    }
+
+    /**
+     * r12: the button follows the surface (visible while the X view is, gone on
+     * the disconnected stub and in PiP) and rides above the extra-key bar while
+     * the bar is shown, so the keys never cover it. Called from onCreate and
+     * from every path that re-evaluates the bar.
+     */
+    private void layoutExtraKeysButton() {
+        View button = findViewById(R.id.extra_keys_button);
+        if (button == null)
+            return;
+        boolean show = LorieView.connected() && !isInPictureInPictureMode;
+        button.setVisibility(show ? View.VISIBLE : View.GONE);
+        button.setAlpha(show ? 1.f : 0.f);
+        ViewPager pager = getTerminalToolbarViewPager();
+        ViewGroup.LayoutParams lp = pager.getLayoutParams();
+        int lift = (pager.getVisibility() == View.VISIBLE && lp != null) ? lp.height : 0;
+        button.setTranslationY(-lift);
     }
 
     public boolean handleKey(KeyEvent e) {
@@ -790,12 +837,13 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * r7: the view's margins for the display the window is on NOW. The built-in
-     * display keeps the launcher's gaps (the extra-key bar sits in the bottom one);
-     * any other display gets none, because the bar is hidden there and the X root
-     * must equal the monitor. Before r7 the margins were set once in onCreate, so a
-     * session moved to a monitor kept the 165 px bar gap as a black band
-     * (X root 1920x915 on a 1920x1080 display). Idempotent: called on create, on
-     * every configuration change (a display move is one), focus change and new intent.
+     * display keeps the launcher's gaps, any other display gets none, so a session
+     * moved to a monitor never keeps a black band from a built-in-display gap
+     * (X root 1920x915 on a 1920x1080 display before r7). r12: the launcher passes
+     * 0 for both gaps because the extra-key bar is an overlay that starts hidden,
+     * so in practice the margins are 0; the mechanism stays for an older launcher
+     * build's extras. Idempotent: called on create, on every configuration change
+     * (a display move is one), focus change and new intent.
      */
     void applyPhoshdroidPadding() {
         View view = findViewById(R.id.lorieView);
@@ -962,6 +1010,7 @@ public class MainActivity extends AppCompatActivity {
         pager.setAlpha(isInPictureInPictureMode ? 0.f : ((float) prefs.opacityEKBar.get())/100);
         findViewById(R.id.mouse_buttons).setAlpha(isInPictureInPictureMode ? 0.f : 0.7f);
         findViewById(R.id.mouse_helper_visibility).setAlpha(isInPictureInPictureMode ? 0.f : 1.f);
+        layoutExtraKeysButton();
 
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
     }
