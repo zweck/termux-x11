@@ -30,6 +30,7 @@ import android.os.Build.VERSION_CODES;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -79,7 +80,8 @@ public class MainActivity extends AppCompatActivity {
     public static final String ACTION_STOP = "com.termux.x11.ACTION_STOP";
     public static final String ACTION_CUSTOM = "com.termux.x11.ACTION_CUSTOM";
 
-    public static Handler handler = new Handler();
+    // Host services can load this class before the activity, on a worker thread.
+    public static Handler handler = new Handler(Looper.getMainLooper());
     FrameLayout frm;
     private TouchInputHandler mInputHandler;
     protected ICmdEntryInterface service = null;
