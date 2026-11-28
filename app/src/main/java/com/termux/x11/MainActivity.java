@@ -60,6 +60,8 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.NotificationCompat;
 import androidx.core.math.MathUtils;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.viewpager.widget.ViewPager;
 
 import com.termux.x11.input.InputEventSender;
@@ -760,14 +762,22 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * r12: the extra-key bar's summon button. The bar starts hidden in every
-     * session, so this button is the way back to it: it runs the same toggle as
-     * the "toggle additional key bar" input action, showing and hiding the bar.
+     * session, so this button is the way back to it. Dismissing the controls
+     * also hides the Android keyboard, including when only that keyboard is up.
      */
     private void initExtraKeysButton() {
         View button = findViewById(R.id.extra_keys_button);
         if (button == null)
             return;
-        button.setOnClickListener(v -> toggleExtraKeys());
+        button.setOnClickListener(v -> {
+            View decor = getWindow().getDecorView();
+            WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(decor);
+            boolean imeVisible = insets != null && insets.isVisible(WindowInsetsCompat.Type.ime());
+            boolean dismiss = getTerminalToolbarViewPager().getVisibility() == View.VISIBLE || imeVisible;
+            if (dismiss)
+                inputMethodManager.hideSoftInputFromWindow(decor.getWindowToken(), 0);
+            toggleExtraKeys(!dismiss, true);
+        });
         layoutExtraKeysButton();
     }
 
