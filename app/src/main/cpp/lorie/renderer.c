@@ -262,6 +262,7 @@ void rendererTestCapabilities(int* legacy_drawing, uint8_t* flip) {
     // Some devices do not support sampling from HAL_PIXEL_FORMAT_BGRA_8888, here we are checking it.
     const EGLint imageAttributes[] = {EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE};
     EGLint numConfigs;
+    EGLint major, minor;
     EGLClientBuffer clientBuffer;
     EGLImageKHR img;
     AHardwareBuffer *new = NULL;
@@ -274,18 +275,44 @@ void rendererTestCapabilities(int* legacy_drawing, uint8_t* flip) {
             .format = AHARDWAREBUFFER_FORMAT_B8G8R8A8_UNORM
     };
 
+    if (*legacy_drawing) {
+        loge("lorie: renderer path legacy (%s)", "forced on the command line");
+        return;
+    }
+
     if (egl_display == EGL_NO_DISPLAY) {
         egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-        if (egl_display == EGL_NO_DISPLAY)
+        if (egl_display == EGL_NO_DISPLAY) {
+            *legacy_drawing = 1;
+            loge("lorie: renderer path legacy (%s)", "got no EGL display");
             return vprintEglError("Got no EGL display", __LINE__);
+        }
+    }
+
+    // This probe runs from InitOutput, before rendererInit() has initialised the display,
+    // and eglCreateImageKHR below needs an initialised display. eglInitialize is idempotent,
+    // so rendererInit() may call it again.
+    if (eglInitialize(egl_display, &major, &minor) != EGL_TRUE) {
+        *legacy_drawing = 1;
+        loge("lorie: renderer path legacy (%s)", "unable to initialize EGL");
+        return vprintEglError("Unable to initialize EGL for the capability probe", __LINE__);
     }
 
     status = AHardwareBuffer_allocate(&d0, &new);
     if (status != 0 || new == NULL) {
         loge("Failed to allocate native buffer (%p, error %d)", new, status);
-        loge("Forcing legacy drawing");
-        *legacy_drawing = 1;
-        return;
+        // Some devices refuse BGRA but accept R8G8B8X8, which the fragment shader can flip.
+        d0.format = AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM;
+        status = AHardwareBuffer_allocate(&d0, &new);
+        if (status != 0 || new == NULL) {
+            loge("Failed to allocate native buffer as AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM (%p, error %d)", new, status);
+            loge("Forcing legacy drawing");
+            *legacy_drawing = 1;
+            loge("lorie: renderer path legacy (%s)", "no usable native buffer format");
+            return;
+        }
+        loge("Allocated native buffer as AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM");
+        *flip = 1;
     }
 
     uint32_t *pixels;
@@ -296,6 +323,7 @@ void rendererTestCapabilities(int* legacy_drawing, uint8_t* flip) {
         loge("Failed to lock native buffer (%p, error %d)", new, status);
         loge("Forcing legacy drawing");
         *legacy_drawing = 1;
+        loge("lorie: renderer path legacy (%s)", "unable to lock the native buffer");
         AHardwareBuffer_release(new);
         return;
     }
@@ -303,6 +331,7 @@ void rendererTestCapabilities(int* legacy_drawing, uint8_t* flip) {
     clientBuffer = eglGetNativeClientBufferANDROID(new);
     if (!clientBuffer) {
         *legacy_drawing = 1;
+        loge("lorie: renderer path legacy (%s)", "no EGLClientBuffer from AHardwareBuffer");
         AHardwareBuffer_release(new);
         return vprintEglError("Failed to obtain EGLClientBuffer from AHardwareBuffer, forcing legacy drawing", __LINE__);
     }
@@ -315,6 +344,7 @@ void rendererTestCapabilities(int* legacy_drawing, uint8_t* flip) {
             loge("Failed to obtain EGLImageKHR from EGLClientBuffer");
             loge("Forcing legacy drawing");
             *legacy_drawing = 1;
+            loge("lorie: renderer path legacy (%s)", "no EGLImageKHR from the EGLClientBuffer");
         }
         AHardwareBuffer_release(new);
     } else {
@@ -327,12 +357,18 @@ void rendererTestCapabilities(int* legacy_drawing, uint8_t* flip) {
         configAttribs[1] = EGL_PBUFFER_BIT;
         EGLConfig checkcfg = 0;
         GLuint fbo = 0, texture = 0;
-        if (eglChooseConfig(egl_display, configAttribs, &checkcfg, 1, &numConfigs) != EGL_TRUE)
+        if (eglChooseConfig(egl_display, configAttribs, &checkcfg, 1, &numConfigs) != EGL_TRUE) {
+            *legacy_drawing = 1;
+            loge("lorie: renderer path legacy (%s)", "check eglChooseConfig failed");
             return vprintEglError("check eglChooseConfig failed", __LINE__);
+        }
 
         EGLContext testctx = eglCreateContext(egl_display, checkcfg, NULL, ctxattribs);
-        if (testctx == EGL_NO_CONTEXT)
+        if (testctx == EGL_NO_CONTEXT) {
+            *legacy_drawing = 1;
+            loge("lorie: renderer path legacy (%s)", "check eglCreateContext failed");
             return vprintEglError("check eglCreateContext failed", __LINE__);
+        }
 
         const EGLint pbufferAttributes[] = {
                 EGL_WIDTH, 64,
@@ -341,8 +377,11 @@ void rendererTestCapabilities(int* legacy_drawing, uint8_t* flip) {
         };
         EGLSurface checksfc = eglCreatePbufferSurface(egl_display, checkcfg, pbufferAttributes);
 
-        if (eglMakeCurrent(egl_display, checksfc, checksfc, testctx) != EGL_TRUE)
+        if (eglMakeCurrent(egl_display, checksfc, checksfc, testctx) != EGL_TRUE) {
+            *legacy_drawing = 1;
+            loge("lorie: renderer path legacy (%s)", "check eglMakeCurrent failed");
             return vprintEglError("check eglMakeCurrent failed", __LINE__);
+        }
 
         glActiveTexture(GL_TEXTURE0); checkGlError();
         glGenTextures(1, &texture); checkGlError();
@@ -366,6 +405,12 @@ void rendererTestCapabilities(int* legacy_drawing, uint8_t* flip) {
         eglDestroySurface(egl_display, checksfc);
         AHardwareBuffer_release(new);
     }
+
+    // One greppable line per session so the chosen path is provable from logcat.
+    if (*legacy_drawing)
+        loge("lorie: renderer path legacy (%s)", "GLES returned broken pixels");
+    else
+        log("lorie: renderer path AHardwareBuffer+EGLImageKHR%s", *flip ? ", flipped" : "");
 }
 
 __unused void rendererSetSharedState(struct lorie_shared_server_state* newState) {
