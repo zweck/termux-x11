@@ -753,7 +753,11 @@ public class MainActivity extends AppCompatActivity {
             prefs.additionalKbdVisible.put(visible);
 
         setTerminalToolbarView();
-        getWindow().setSoftInputMode(prefs.Reseed.get() ? SOFT_INPUT_ADJUST_RESIZE : SOFT_INPUT_ADJUST_PAN);
+        // phoshdroid: always adjustNothing. The window keeps its size when the keyboard opens, so
+        // the surface (and with it the X root) never changes and the guest's desktop stays put;
+        // resizing or panning here reflows Hyprland for nothing. The stock Reseed preference is
+        // left in the settings screen but no longer decides this.
+        getWindow().setSoftInputMode(SOFT_INPUT_ADJUST_NOTHING);
     }
 
     public void toggleExtraKeys() {
@@ -918,7 +922,6 @@ public class MainActivity extends AppCompatActivity {
         View decorView = window.getDecorView();
         boolean fullscreen = prefs.fullscreen.get();
         boolean hideCutout = prefs.hideCutout.get();
-        boolean reseed = prefs.Reseed.get();
 
         if (oldHideCutout != hideCutout || oldFullscreen != fullscreen) {
             oldHideCutout = hideCutout;
@@ -977,7 +980,9 @@ public class MainActivity extends AppCompatActivity {
         else
             window.clearFlags(FLAG_KEEP_SCREEN_ON);
 
-        window.setSoftInputMode(reseed ? SOFT_INPUT_ADJUST_RESIZE : SOFT_INPUT_ADJUST_PAN);
+        // phoshdroid: the keyboard overlays; see toggleExtraKeys(). Never resize the window for
+        // it, or the X root changes and the desktop reflows.
+        window.setSoftInputMode(SOFT_INPUT_ADJUST_NOTHING);
 
         ((FrameLayout) findViewById(android.R.id.content)).getChildAt(0).setFitsSystemWindows(!fullscreen);
 

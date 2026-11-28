@@ -17,6 +17,8 @@
         android:theme="@style/AppTheme"
         android:hardwareAccelerated="true"
         tools:ignore="DataExtractionRules,GoogleAppIndexingWarning">
+        <!-- phoshdroid: stateHidden|adjustNothing. The keyboard overlays the surface; resizing
+             the window would change the X root and Hyprland would reflow the whole desktop. -->
         <activity
             android:name=".MainActivity"
             android:taskAffinity=".MainActivity"
@@ -24,7 +26,7 @@
             android:supportsPictureInPicture="true"
             android:configChanges="fontScale|orientation|screenSize|keyboard|keyboardHidden|layoutDirection|locale|mcc|mnc|navigation|screenLayout|touchscreen|colorMode|uiMode|smallestScreenSize|density"
             android:resizeableActivity="true"
-            android:windowSoftInputMode="stateHidden"
+            android:windowSoftInputMode="stateHidden|adjustNothing"
             android:exported="false">
         </activity>
         <activity

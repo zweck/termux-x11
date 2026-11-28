@@ -1,6 +1,8 @@
 package com.termux.x11.utils;
 
 import static android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN;
+import static android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
+import static android.view.WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST;
 
 import android.graphics.Rect;
 import android.widget.FrameLayout;
@@ -30,6 +32,7 @@ public class FullscreenWorkaround {
     private void possiblyResizeChildOfContent() {
         Prefs p = MainActivity.getPrefs();
         if (
+                !resizesForKeyboard() ||
                 !mActivity.hasWindowFocus() ||
                 !((mActivity.getWindow().getAttributes().flags & FLAG_FULLSCREEN) == FLAG_FULLSCREEN) ||
                 !p.Reseed.get() || !p.fullscreen.get() || SamsungDexUtils.checkDeXEnabled(mActivity)
@@ -53,6 +56,16 @@ public class FullscreenWorkaround {
             content.requestLayout();
             usableHeightPrevious = usableHeightNow;
         }
+    }
+
+    /**
+     * phoshdroid: only a window that asks to be resized for the keyboard may be resized here.
+     * MainActivity always sets ADJUST_NOTHING so the keyboard overlays the surface and the X
+     * root stays put; resizing the content view under that mode would reflow the desktop.
+     */
+    private boolean resizesForKeyboard() {
+        int adjust = mActivity.getWindow().getAttributes().softInputMode & SOFT_INPUT_MASK_ADJUST;
+        return adjust == SOFT_INPUT_ADJUST_RESIZE;
     }
 
     private int computeUsableHeight(View v) {
