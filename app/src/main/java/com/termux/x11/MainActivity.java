@@ -1044,6 +1044,69 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Whether Termux:X11 allows the soft keyboard while a hardware keyboard is attached
+     * (`showIMEWhileExternalConnected`). The host's text-focus rule reads it so its own
+     * decision and [setExternalKeyboardConnected]'s cannot disagree.
+     */
+    public static boolean showImeWhileExternalConnected() {
+        return showIMEWhileExternalConnected;
+    }
+
+    /** Whether the soft keyboard is up, from the window's IME insets. */
+    private static boolean isImeVisible(MainActivity activity) {
+        View decor = activity.getWindow().getDecorView();
+        WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(decor);
+        return insets != null && insets.isVisible(WindowInsetsCompat.Type.ime());
+    }
+
+    /**
+     * Shows the soft keyboard, idempotently: calling it with the keyboard already up changes
+     * nothing, and it never takes the keyboard down. The host's text-focus watcher drives this,
+     * so an unchanged state file must not toggle the keyboard back off.
+     *
+     * The keyboard goes to the [LorieView] and not to the extra-keys bar's text field: LorieView
+     * owns the activity's [android.view.inputmethod.InputConnection] and forwards composed text
+     * to the X server, while the toolbar field only sends on its editor action.
+     *
+     * Honours the same rule as [setExternalKeyboardConnected]: with a hardware keyboard attached
+     * and `showIMEWhileExternalConnected` off, no soft keyboard is shown at all.
+     *
+     * @return true when the keyboard is (or was already) up
+     */
+    public static boolean showKeyboard() {
+        MainActivity activity = getInstance();
+        if (activity == null || inputMethodManager == null)
+            return false;
+        if (externalKeyboardConnected && !showIMEWhileExternalConnected) {
+            Log.d("MainActivity", "showKeyboard: suppressed, hardware keyboard attached");
+            return false;
+        }
+        if (isImeVisible(activity))
+            return true;
+        LorieView view = activity.getLorieView();
+        if (view == null)
+            return false;
+        view.requestFocus();
+        return inputMethodManager.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT);
+    }
+
+    /**
+     * Hides the soft keyboard, idempotently: calling it with the keyboard already down changes
+     * nothing, and it never brings it up.
+     *
+     * @return true when the keyboard is (or was already) down
+     */
+    public static boolean hideKeyboard() {
+        MainActivity activity = getInstance();
+        if (activity == null || inputMethodManager == null)
+            return false;
+        if (!isImeVisible(activity))
+            return true;
+        View decor = activity.getWindow().getDecorView();
+        return inputMethodManager.hideSoftInputFromWindow(decor.getWindowToken(), 0);
+    }
+
     @SuppressWarnings("SameParameterValue")
     void clientConnectedStateChanged() {
         runOnUiThread(()-> {
